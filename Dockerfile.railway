@@ -100,6 +100,20 @@ WORKDIR /data
 # No need to hardcode; Railway handles port assignment.
 EXPOSE 42617
 
-ENTRYPOINT ["zeroclaw"]
+# Fix: repair config volume (sed changed wrong "backend" line — sandbox, not observability)
+# Also ensure gateway binds publicly and observability is enabled.
+# Safe to run on every boot — idempotent sed replacements.
+RUN printf '#!/bin/sh\n\
+CFG=/data/.zeroclaw/config.toml\n\
+if [ -f "$CFG" ]; then\n\
+  sed -i "/\\[security\\.sandbox\\]/,/^\\[/ s/backend = \"log\"/backend = \"none\"/" "$CFG"\n\
+  sed -i "/\\[observability\\]/,/^\\[/ s/backend = \"none\"/backend = \"log\"/" "$CFG"\n\
+  sed -i "/\\[observability\\]/,/^\\[/ s/runtime_trace_mode = \"none\"/runtime_trace_mode = \"rolling\"/" "$CFG"\n\
+  sed -i "/\\[gateway\\]/,/^\\[/ s/host = \"127.0.0.1\"/host = \"0.0.0.0\"/" "$CFG"\n\
+  sed -i "/\\[gateway\\]/,/^\\[/ s/allow_public_bind = false/allow_public_bind = true/" "$CFG"\n\
+fi\n\
+exec zeroclaw "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Default: full daemon (gateway + channels + heartbeat + scheduler)
 CMD ["daemon"]
