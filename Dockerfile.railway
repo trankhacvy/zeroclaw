@@ -100,6 +100,22 @@ WORKDIR /data
 # No need to hardcode; Railway handles port assignment.
 EXPOSE 42617
 
-ENTRYPOINT ["zeroclaw"]
+# One-time fix: repair corrupted sandbox backend on volume config.
+# Simple global replace — fix sandbox "log"->"none" first, skip observability for now.
+COPY <<'ENTRY' /usr/local/bin/entrypoint.sh
+#!/bin/sh
+set -e
+CFG=/data/.zeroclaw/config.toml
+echo "[entrypoint] checking config at $CFG" >&2
+if [ -f "$CFG" ] && grep -q 'backend = "log"' "$CFG"; then
+  echo "[entrypoint] fixing corrupted sandbox backend" >&2
+  sed -i 's/backend = "log"/backend = "none"/g' "$CFG"
+  echo "[entrypoint] config patched" >&2
+fi
+exec zeroclaw "$@"
+ENTRY
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Default: full daemon (gateway + channels + heartbeat + scheduler)
 CMD ["daemon"]
