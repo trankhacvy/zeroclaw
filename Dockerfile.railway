@@ -1,0 +1,107 @@
+# syntax=docker/dockerfile:1.7
+#
+# Railway-optimised Dockerfile for ZeroClaw.
+# Uses debian-slim runtime (not distroless) for better debuggability on Railway.
+#
+# Railway injects PORT env var automatically — ZeroClaw reads it as fallback
+# for ZEROCLAW_GATEWAY_PORT, so the gateway binds to the correct port.
+
+# ── Stage 1: Build ────────────────────────────────────────────
+FROM rust:1.93-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1. Copy manifests to cache dependencies
+COPY Cargo.toml Cargo.lock ./
+COPY crates/robot-kit/Cargo.toml crates/robot-kit/Cargo.toml
+# Create dummy targets declared in Cargo.toml so manifest parsing succeeds.
+RUN mkdir -p src benches crates/robot-kit/src \
+    && echo "fn main() {}" > src/main.rs \
+    && echo "fn main() {}" > benches/agent_benchmarks.rs \
+    && echo "pub fn placeholder() {}" > crates/robot-kit/src/lib.rs
+RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=zeroclaw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=zeroclaw-target,target=/app/target,sharing=locked \
+    cargo build --release --locked
+RUN rm -rf src benches crates/robot-kit/src
+
+# 2. Copy only build-relevant source paths (avoid cache-busting on docs/tests/scripts)
+COPY src/ src/
+COPY benches/ benches/
+COPY crates/ crates/
+COPY firmware/ firmware/
+COPY web/ web/
+# Keep release builds resilient when frontend dist assets are not prebuilt in Git.
+RUN mkdir -p web/dist && \
+    if [ ! -f web/dist/index.html ]; then \
+      printf '%s\n' \
+        '<!doctype html>' \
+        '<html lang="en">' \
+        '  <head>' \
+        '    <meta charset="utf-8" />' \
+        '    <meta name="viewport" content="width=device-width,initial-scale=1" />' \
+        '    <title>ZeroClaw Dashboard</title>' \
+        '  </head>' \
+        '  <body>' \
+        '    <h1>ZeroClaw Dashboard Unavailable</h1>' \
+        '    <p>Frontend assets are not bundled in this build. Build the web UI to populate <code>web/dist</code>.</p>' \
+        '  </body>' \
+        '</html>' > web/dist/index.html; \
+    fi
+RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=zeroclaw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=zeroclaw-target,target=/app/target,sharing=locked \
+    cargo build --release --locked && \
+    cp target/release/zeroclaw /app/zeroclaw && \
+    strip /app/zeroclaw
+
+# ── Stage 2: Railway Runtime ─────────────────────────────────
+FROM debian:trixie-slim
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary
+COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
+
+# Railway mounts volumes at /data — use it as HOME and workspace root
+ENV HOME=/data
+ENV ZEROCLAW_WORKSPACE=/data/workspace
+ENV ZEROCLAW_ALLOW_PUBLIC_BIND=true
+
+# Prepare data directory and default config
+RUN mkdir -p /data/.zeroclaw /data/workspace && \
+    printf '%s\n' \
+        'workspace_dir = "/data/workspace"' \
+        'config_path = "/data/.zeroclaw/config.toml"' \
+        'api_key = ""' \
+        'default_provider = "openrouter"' \
+        'default_model = "google/gemini-3.1-flash-lite-preview"' \
+        'default_temperature = 0.7' \
+        '' \
+        '[gateway]' \
+        'port = 42617' \
+        'host = "[::]"' \
+        'allow_public_bind = true' \
+        > /data/.zeroclaw/config.toml
+
+WORKDIR /data
+
+# Railway injects PORT env var — ZeroClaw reads it via:
+#   ZEROCLAW_GATEWAY_PORT || PORT (fallback)
+# No need to hardcode; Railway handles port assignment.
+EXPOSE 42617
+
+ENTRYPOINT ["zeroclaw"]
+# Default: full daemon (gateway + channels + heartbeat + scheduler)
+CMD ["daemon"]
