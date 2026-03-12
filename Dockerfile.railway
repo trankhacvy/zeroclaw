@@ -101,22 +101,8 @@ WORKDIR /data
 EXPOSE 42617
 
 # One-time fix: repair corrupted sandbox backend on volume config.
-# Avoid heredoc COPY (unsupported on some builders); use RUN printf instead.
-RUN printf '%s\n' \
-      '#!/bin/sh' \
-      'set -e' \
-      'CFG=/data/.zeroclaw/config.toml' \
-      'echo "[entrypoint] checking config at $CFG" >&2' \
-      'if [ -f "$CFG" ]; then' \
-      '  if grep -qE "backend\s*=\s*\"log\"" "$CFG"; then' \
-      '    echo "[entrypoint] fixing corrupted sandbox backend" >&2' \
-      '    sed -i "s/backend *= *\"log\"/backend = \"none\"/g" "$CFG"' \
-      '    echo "[entrypoint] config patched" >&2' \
-      '  fi' \
-      'fi' \
-      'exec zeroclaw "$@"' \
-      > /usr/local/bin/entrypoint.sh && \
-    chmod +x /usr/local/bin/entrypoint.sh
+COPY deploy/entrypoint.railway.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Default: full daemon (gateway + channels + heartbeat + scheduler)
