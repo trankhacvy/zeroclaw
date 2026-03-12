@@ -80,20 +80,8 @@ ENV ZEROCLAW_ALLOW_PUBLIC_BIND=true
 ENV ZEROCLAW_CONFIG_DIR=/etc/zeroclaw
 
 # Bake a clean default config into the image (volume cannot corrupt this)
-RUN mkdir -p /etc/zeroclaw /data/workspace && \
-    printf '%s\n' \
-        'workspace_dir = "/data/workspace"' \
-        'config_path = "/etc/zeroclaw/config.toml"' \
-        'api_key = ""' \
-        'default_provider = "openrouter"' \
-        'default_model = "google/gemini-3.1-flash-lite-preview"' \
-        'default_temperature = 0.7' \
-        '' \
-        '[gateway]' \
-        'port = 42617' \
-        'host = "[::]"' \
-        'allow_public_bind = true' \
-        > /etc/zeroclaw/config.toml
+COPY deploy/config.railway.toml /etc/zeroclaw/config.toml
+RUN mkdir -p /data/workspace
 
 WORKDIR /data
 
