@@ -242,6 +242,15 @@ pub struct ModelProviderConfig {
     /// If true, load OpenAI auth material (OPENAI_API_KEY or ~/.codex/auth.json).
     #[serde(default)]
     pub requires_openai_auth: bool,
+    /// Azure OpenAI resource name (e.g. "my-resource" in https://my-resource.openai.azure.com).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_openai_resource: Option<String>,
+    /// Azure OpenAI deployment name (e.g. "gpt-4o").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_openai_deployment: Option<String>,
+    /// Azure OpenAI API version (defaults to "2024-08-01-preview").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_openai_api_version: Option<String>,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -2122,6 +2131,57 @@ impl Default for HooksConfig {
 pub struct BuiltinHooksConfig {
     /// Enable the command-logger hook (logs tool calls for auditing).
     pub command_logger: bool,
+    /// Configuration for the webhook-audit hook.
+    ///
+    /// When enabled, POSTs a JSON payload to `url` for every tool invocation
+    /// that matches one of `tool_patterns`.
+    #[serde(default)]
+    pub webhook_audit: WebhookAuditConfig,
+}
+
+/// Configuration for the webhook-audit builtin hook.
+///
+/// Sends an HTTP POST with a JSON body to an external endpoint each time
+/// a tool call matches one of the configured patterns. Useful for
+/// centralised audit logging, SIEM ingestion, or compliance pipelines.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WebhookAuditConfig {
+    /// Enable the webhook-audit hook. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Target URL that will receive the audit POST requests.
+    #[serde(default)]
+    pub url: String,
+    /// Glob patterns for tool names to audit (e.g. `["Bash", "Write"]`).
+    /// An empty list means **no** tools are audited.
+    #[serde(default)]
+    pub tool_patterns: Vec<String>,
+    /// Include tool call arguments in the audit payload. Default: `false`.
+    ///
+    /// Be mindful of sensitive data — arguments may contain secrets or PII.
+    #[serde(default)]
+    pub include_args: bool,
+    /// Maximum size (in bytes) of serialised arguments included in a single
+    /// audit payload. Arguments exceeding this limit are truncated.
+    /// Default: `4096`.
+    #[serde(default = "default_max_args_bytes")]
+    pub max_args_bytes: u64,
+}
+
+fn default_max_args_bytes() -> u64 {
+    4096
+}
+
+impl Default for WebhookAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            tool_patterns: Vec::new(),
+            include_args: false,
+            max_args_bytes: default_max_args_bytes(),
+        }
+    }
 }
 
 // ── Autonomy / Security ──────────────────────────────────────────
@@ -2756,6 +2816,7 @@ pub struct ChannelsConfig {
     pub dingtalk: Option<DingTalkConfig>,
     /// QQ Official Bot channel configuration.
     pub qq: Option<QQConfig>,
+    #[cfg(feature = "channel-nostr")]
     pub nostr: Option<NostrConfig>,
     /// ClawdTalk voice channel configuration.
     pub clawdtalk: Option<crate::channels::ClawdTalkConfig>,
@@ -2841,6 +2902,7 @@ impl ChannelsConfig {
                 Box::new(ConfigWrapper::new(self.qq.as_ref())),
                 self.qq.is_some()
             ),
+            #[cfg(feature = "channel-nostr")]
             (
                 Box::new(ConfigWrapper::new(self.nostr.as_ref())),
                 self.nostr.is_some(),
@@ -2888,6 +2950,7 @@ impl Default for ChannelsConfig {
             feishu: None,
             dingtalk: None,
             qq: None,
+            #[cfg(feature = "channel-nostr")]
             nostr: None,
             clawdtalk: None,
             message_timeout_secs: default_channel_message_timeout_secs(),
@@ -3719,6 +3782,7 @@ impl ChannelConfig for QQConfig {
 }
 
 /// Nostr channel configuration (NIP-04 + NIP-17 private messages)
+#[cfg(feature = "channel-nostr")]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct NostrConfig {
     /// Private key in hex or nsec bech32 format
@@ -3731,6 +3795,7 @@ pub struct NostrConfig {
     pub allowed_pubkeys: Vec<String>,
 }
 
+#[cfg(feature = "channel-nostr")]
 impl ChannelConfig for NostrConfig {
     fn name() -> &'static str {
         "Nostr"
@@ -3740,6 +3805,7 @@ impl ChannelConfig for NostrConfig {
     }
 }
 
+#[cfg(feature = "channel-nostr")]
 pub fn default_nostr_relays() -> Vec<String> {
     vec![
         "wss://relay.damus.io".to_string(),
@@ -4283,6 +4349,7 @@ impl Config {
                 decrypt_optional_secret(&store, &mut google.api_key, "config.tts.google.api_key")?;
             }
 
+            #[cfg(feature = "channel-nostr")]
             if let Some(ref mut ns) = config.channels_config.nostr {
                 decrypt_secret(
                     &store,
@@ -5119,6 +5186,7 @@ impl Config {
             encrypt_optional_secret(&store, &mut google.api_key, "config.tts.google.api_key")?;
         }
 
+        #[cfg(feature = "channel-nostr")]
         if let Some(ref mut ns) = config_to_save.channels_config.nostr {
             encrypt_secret(
                 &store,
@@ -5726,6 +5794,7 @@ default_temperature = 0.7
                 feishu: None,
                 dingtalk: None,
                 qq: None,
+                #[cfg(feature = "channel-nostr")]
                 nostr: None,
                 clawdtalk: None,
                 message_timeout_secs: 300,
@@ -7081,6 +7150,9 @@ requires_openai_auth = true
                     base_url: Some("https://api.tonsof.blue/v1".to_string()),
                     wire_api: None,
                     requires_openai_auth: false,
+                    azure_openai_resource: None,
+                    azure_openai_deployment: None,
+                    azure_openai_api_version: None,
                 },
             )]),
             ..Config::default()
@@ -7109,6 +7181,9 @@ requires_openai_auth = true
                     base_url: Some("https://api.tonsof.blue".to_string()),
                     wire_api: Some("responses".to_string()),
                     requires_openai_auth: true,
+                    azure_openai_resource: None,
+                    azure_openai_deployment: None,
+                    azure_openai_api_version: None,
                 },
             )]),
             api_key: None,
@@ -7171,6 +7246,9 @@ requires_openai_auth = true
                     base_url: Some("https://api.tonsof.blue/v1".to_string()),
                     wire_api: Some("ws".to_string()),
                     requires_openai_auth: false,
+                    azure_openai_resource: None,
+                    azure_openai_deployment: None,
+                    azure_openai_api_version: None,
                 },
             )]),
             ..Config::default()

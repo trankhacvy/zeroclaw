@@ -257,7 +257,13 @@ pub async fn handle_api_cron_add(
         tz: None,
     };
 
-    match crate::cron::add_shell_job(&config, body.name, schedule, &body.command) {
+    match crate::cron::add_shell_job_with_approval(
+        &config,
+        body.name,
+        schedule,
+        &body.command,
+        false,
+    ) {
         Ok(job) => Json(serde_json::json!({
             "status": "ok",
             "job": {
@@ -805,6 +811,7 @@ fn mask_sensitive_fields(config: &crate::config::Config) -> crate::config::Confi
     if let Some(qq) = masked.channels_config.qq.as_mut() {
         mask_required_secret(&mut qq.app_secret);
     }
+    #[cfg(feature = "channel-nostr")]
     if let Some(nostr) = masked.channels_config.nostr.as_mut() {
         mask_required_secret(&mut nostr.private_key);
     }
@@ -982,6 +989,7 @@ fn restore_masked_sensitive_fields(
     ) {
         restore_required_secret(&mut incoming_ch.app_secret, &current_ch.app_secret);
     }
+    #[cfg(feature = "channel-nostr")]
     if let (Some(incoming_ch), Some(current_ch)) = (
         incoming.channels_config.nostr.as_mut(),
         current.channels_config.nostr.as_ref(),
