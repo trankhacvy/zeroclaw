@@ -76,12 +76,14 @@ COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
 ENV HOME=/data
 ENV ZEROCLAW_WORKSPACE=/data/workspace
 ENV ZEROCLAW_ALLOW_PUBLIC_BIND=true
+# Use image-baked config dir to avoid corrupted volume config
+ENV ZEROCLAW_CONFIG_DIR=/etc/zeroclaw
 
-# Prepare data directory and default config
-RUN mkdir -p /data/.zeroclaw /data/workspace && \
+# Bake a clean default config into the image (volume cannot corrupt this)
+RUN mkdir -p /etc/zeroclaw /data/workspace && \
     printf '%s\n' \
         'workspace_dir = "/data/workspace"' \
-        'config_path = "/data/.zeroclaw/config.toml"' \
+        'config_path = "/etc/zeroclaw/config.toml"' \
         'api_key = ""' \
         'default_provider = "openrouter"' \
         'default_model = "google/gemini-3.1-flash-lite-preview"' \
@@ -91,7 +93,7 @@ RUN mkdir -p /data/.zeroclaw /data/workspace && \
         'port = 42617' \
         'host = "[::]"' \
         'allow_public_bind = true' \
-        > /data/.zeroclaw/config.toml
+        > /etc/zeroclaw/config.toml
 
 WORKDIR /data
 
@@ -100,10 +102,5 @@ WORKDIR /data
 # No need to hardcode; Railway handles port assignment.
 EXPOSE 42617
 
-# One-time fix: repair corrupted sandbox backend on volume config.
-COPY deploy/entrypoint.railway.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Default: full daemon (gateway + channels + heartbeat + scheduler)
-CMD ["daemon"]
+CMD ["zeroclaw", "daemon"]
