@@ -1,0 +1,7 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+dockerTarget = "release"
+
+[deploy]
+startCommand = "zeroclaw daemon"
